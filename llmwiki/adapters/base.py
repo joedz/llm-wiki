@@ -127,6 +127,32 @@ class BaseAdapter:
                 paths.extend(sorted(store.rglob("*.jsonl")))
         return paths
 
+    def source_mtime(self, path: Path) -> float:
+        """Return the freshness marker used by the sync state file.
+
+        File-backed adapters use filesystem mtime. API-backed adapters can
+        override this to return a remote ``updated`` timestamp while still
+        flowing through the shared converter.
+        """
+        return path.stat().st_mtime
+
+    def source_state_key(self, path: Path) -> str | None:
+        """Optional stable state key for non-file sources.
+
+        ``None`` means the converter should use its portable path-based key.
+        API adapters override this so their state does not depend on a fake
+        local path.
+        """
+        return None
+
+    def read_records(self, path: Path) -> list[dict[str, Any]] | None:
+        """Optional source reader for non-JSONL adapters.
+
+        ``None`` means the converter should parse ``path`` as JSONL. Returning
+        a list lets API-backed adapters provide records without temporary files.
+        """
+        return None
+
     # ─── per-agent helpers ─────────────────────────────────────────────
 
     def derive_project_slug(self, jsonl_path: Path) -> str:

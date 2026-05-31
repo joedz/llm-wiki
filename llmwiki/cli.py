@@ -166,6 +166,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
         project=args.project,
         include_current=args.include_current,
         force=args.force,
+        dry_run=getattr(args, "dry_run", False),
     )
 
     # v1.0 (#157): auto-build and auto-lint after sync.
@@ -173,7 +174,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
     # #470: when --vault was given, point the auto-build at the vault's
     # site/ tree too — otherwise the build silently writes to the
     # repo's site/ and the user's vault stays empty.
-    if rc == 0:
+    if rc == 0 and not getattr(args, "dry_run", False):
         schedule = _load_schedule_config()
         site_root = (vault.root / "site") if vault_path else (REPO_ROOT / "site")
         if args.auto_build and _should_run_after_sync(schedule.get("build", "on-sync")):
@@ -700,6 +701,7 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--project", type=str, help="Substring filter on project slug")
     sync.add_argument("--include-current", action="store_true", help="Don't skip live sessions (<60 min)")
     sync.add_argument("--force", action="store_true", help="Ignore state file, reconvert everything")
+    sync.add_argument("--dry-run", action="store_true", help="Show what would be converted without writing raw/session state")
     sync.add_argument(
         "--auto-build", action=argparse.BooleanOptionalAction, default=True,
         help="After sync, rebuild the site when sessions_config.json's "

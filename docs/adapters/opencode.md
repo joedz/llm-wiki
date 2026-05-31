@@ -1,70 +1,69 @@
 ---
-title: "OpenCode / OpenClaw adapter"
+title: "OpenCode adapter"
 type: navigation
 docs_shell: true
 ---
 
-# OpenCode / OpenClaw adapter
+# OpenCode adapter
 
-Reads `.jsonl` session transcripts written by the
-[OpenCode](https://github.com/sst/opencode) / OpenClaw agents —
-both use an identical schema.
+Reads sessions from a running local [OpenCode](https://github.com/sst/opencode)
+HTTP server and converts them into the standard llmwiki session markdown.
 
-**AI-session adapter** (`is_ai_session = True`) — fires by default
-when its session store is present on disk.
+**AI-session adapter** (`is_ai_session = True`) - fires by default when the
+OpenCode API is reachable.
 
-## Session store
+## Source
 
-The adapter auto-detects the store across platforms:
+The current OpenCode session store is DB/API-backed. llmwiki intentionally
+uses the public local API instead of reading SQLite tables directly:
 
-- **Linux:** `~/.config/opencode/sessions/` and `~/.config/openclaw/sessions/`
-- **macOS:** `~/Library/Application Support/opencode/sessions/` and
-  `~/Library/Application Support/openclaw/sessions/`
-- **Windows:** `%APPDATA%\opencode\sessions\` and `%APPDATA%\openclaw\sessions\`
+- `GET /session` lists sessions.
+- `GET /session/:sessionID/message` returns messages and parts.
+- The default base URL is `http://127.0.0.1:4096`.
 
-Both nested (`<project>/<session>.jsonl`) and flat
-(`<project>-<session>.jsonl`) layouts are handled.
+If OpenCode is not running, `llmwiki sync` skips this adapter with a warning
+and continues with Claude/Codex.
 
-## What it reads
+## Configuration
 
-Each session is a JSONL stream of `{role, content}` records:
-
-```json
-{"role": "user",      "content": "start a new feature"}
-{"role": "assistant", "content": "…"}
-{"role": "tool",      "content": "…"}
-```
-
-`normalize_records()` translates that schema into the Claude-style
-`{type, message: {role, content}}` that the shared renderer expects:
-
-| OpenCode role | Claude-style type | Claude-style role |
-|---|---|---|
-| `user` | `user` | `user` |
-| `assistant` | `assistant` | `assistant` |
-| `tool` | `user` | `tool` (preserved so the renderer can show tool turns distinctly) |
-
-## Enable it
-
-Works out-of-the-box if OpenCode / OpenClaw is installed on this
-machine.  To explicitly disable:
+The defaults work when OpenCode is running on its default local port:
 
 ```jsonc
-// sessions_config.json
-{ "opencode": { "enabled": false } }
+{
+  "opencode": {
+    "enabled": true,
+    "base_url": "http://127.0.0.1:4096",
+    "limit": 100
+  }
+}
 ```
 
-## Output layout
+Authentication is optional and only needed if the OpenCode server requires it:
 
-Standard `raw/sessions/<YYYY-MM-DDTHH-MM>-<project>-<slug>.md`.
+```jsonc
+{
+  "opencode": {
+    "auth_token": "...",
+    "username": "opencode",
+    "password": "..."
+  }
+}
+```
+
+The adapter also accepts the same keys under `adapters.opencode` for
+compatibility with other adapter configuration examples.
+
+## Output
+
+Standard `raw/sessions/<YYYY-MM-DDTHH-MM>-<project>-<slug>.md` files with:
+
+- `tags: [opencode, session-transcript]`
+- `sessionId` from the OpenCode session id
+- `project` derived from the OpenCode session directory/path
+- user, assistant, file, and tool parts rendered as readable transcript turns
 
 ## Code
 
-- `llmwiki/adapters/contrib/opencode.py`
-- Tests: `tests/test_opencode_adapter.py` (23 cases)
-- Issue history: #43 (initial)
-
-## See also
-
-- [All adapters](../../README.md#works-with) — comparison table of
-  every agent adapter llmwiki supports out of the box.
+- Adapter: `llmwiki/adapters/opencode.py`
+- Compatibility shim: `llmwiki/adapters/contrib/opencode.py`
+- Tests: `tests/test_opencode_adapter.py`, `tests/test_opencode_convert.py`

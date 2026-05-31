@@ -73,7 +73,7 @@ def test_six_contrib_adapters_inherit_base_is_available():
       only, requires explicit config)
     """
     inherited = ("codex_cli", "copilot-chat", "cursor", "gemini_cli",
-                 "obsidian", "opencode")
+                 "obsidian")
     for name in inherited:
         if name not in REGISTRY:
             continue

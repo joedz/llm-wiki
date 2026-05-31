@@ -1,232 +1,151 @@
-"""Tests for the OpenCode / OpenClaw adapter (v1.1, #43)."""
+"""Tests for the OpenCode API adapter."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from urllib.error import URLError
 
-import pytest
-
-from llmwiki.adapters.contrib.opencode import OpenCodeAdapter
+from llmwiki.adapters.opencode import OpenCodeAdapter
 
 
-# ─── Adapter registration ─────────────────────────────────────────────
+class _Response:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self):
+        return json.dumps(self.payload).encode("utf-8")
+
+
+def _session(session_id="ses_123", updated=1234567890000):
+    return {
+        "id": session_id,
+        "title": "Implement feature",
+        "directory": "/work/my-project",
+        "time": {"created": 1234567800000, "updated": updated},
+        "model": {"id": "claude-sonnet", "providerID": "anthropic"},
+    }
+
+
+def _messages():
+    return [
+        {
+            "info": {
+                "id": "msg_1",
+                "sessionID": "ses_123",
+                "role": "user",
+                "time": {"created": 1234567800000},
+            },
+            "parts": [{"type": "text", "text": "Add OpenCode sync"}],
+        },
+        {
+            "info": {
+                "id": "msg_2",
+                "sessionID": "ses_123",
+                "role": "assistant",
+                "time": {"created": 1234567810000},
+                "modelID": "claude-sonnet",
+            },
+            "parts": [
+                {"type": "text", "text": "Implemented."},
+                {
+                    "type": "tool",
+                    "tool": "bash",
+                    "state": {"status": "completed", "input": {"cmd": "pytest"}, "output": "ok"},
+                },
+            ],
+        },
+    ]
 
 
 def test_adapter_registered():
-    from llmwiki.adapters import REGISTRY, discover_all
-    discover_all()
-    assert "opencode" in REGISTRY
+    from llmwiki.adapters import REGISTRY, discover_adapters
+
+    discover_adapters()
+    assert REGISTRY["opencode"] is OpenCodeAdapter
 
 
-def test_adapter_has_schema_versions():
-    assert "v1" in OpenCodeAdapter.SUPPORTED_SCHEMA_VERSIONS
+def test_discovers_sessions_from_api(monkeypatch):
+    def fake_urlopen(request, timeout):
+        assert request.full_url == "http://127.0.0.1:4096/experimental/session?limit=100"
+        return _Response([_session()])
+
+    monkeypatch.setattr("llmwiki.adapters.opencode.urlopen", fake_urlopen)
+
+    adapter = OpenCodeAdapter()
+    paths = adapter.discover_sessions()
+
+    assert paths == [Path("opencode-api") / "ses_123.jsonl"]
+    assert adapter.source_state_key(paths[0]) == "opencode::ses_123"
+    assert adapter.source_mtime(paths[0]) == 1234567890000.0
+    assert adapter.derive_project_slug(paths[0]) == "my-project"
 
 
-def test_adapter_has_default_roots_for_all_platforms():
-    roots = OpenCodeAdapter.DEFAULT_ROOTS
-    root_strs = [str(r) for r in roots]
-    # macOS
-    assert any("Library/Application Support/opencode" in r for r in root_strs)
-    # Linux XDG
-    assert any(".config/opencode" in r for r in root_strs)
-    # Windows
-    assert any("AppData/Roaming/opencode" in r for r in root_strs)
+def test_discover_gracefully_skips_unavailable_api(monkeypatch):
+    def fake_urlopen(request, timeout):
+        raise URLError("connection refused")
+
+    monkeypatch.setattr("llmwiki.adapters.opencode.urlopen", fake_urlopen)
+
+    assert OpenCodeAdapter().discover_sessions() == []
 
 
-def test_adapter_includes_openclaw_variant():
-    root_strs = [str(r) for r in OpenCodeAdapter.DEFAULT_ROOTS]
-    # OpenClaw community fork uses its own dir
-    assert any("openclaw" in r for r in root_strs)
+def test_read_records_fetches_messages_and_preserves_session(monkeypatch):
+    def fake_urlopen(request, timeout):
+        if request.full_url.endswith("/experimental/session?limit=100"):
+            return _Response([_session()])
+        if request.full_url.endswith("/session/ses_123/message"):
+            return _Response(_messages())
+        raise AssertionError(request.full_url)
+
+    monkeypatch.setattr("llmwiki.adapters.opencode.urlopen", fake_urlopen)
+
+    adapter = OpenCodeAdapter()
+    path = adapter.discover_sessions()[0]
+    records = adapter.read_records(path)
+
+    assert records is not None
+    assert records[0]["type"] == "opencode_session"
+    assert records[1]["info"]["role"] == "user"
 
 
-# ─── Config-driven roots ─────────────────────────────────────────────
+def test_normalize_records_maps_opencode_messages(monkeypatch):
+    adapter = OpenCodeAdapter()
+    records = [{"type": "opencode_session", "session": _session()}, *_messages()]
+
+    out = adapter.normalize_records(records)
+
+    assert out[0]["type"] == "init"
+    assert out[0]["sessionId"] == "ses_123"
+    assert out[1]["type"] == "user"
+    assert out[1]["message"]["content"] == "Add OpenCode sync"
+    assert out[2]["type"] == "assistant"
+    assert out[2]["message"]["model"] == "claude-sonnet"
+    assert out[2]["message"]["content"][0] == {"type": "text", "text": "Implemented."}
+    assert out[2]["message"]["content"][1]["type"] == "tool_use"
 
 
-def test_adapter_uses_config_roots(tmp_path: Path):
-    custom = tmp_path / "my-opencode"
-    custom.mkdir()
-    a = OpenCodeAdapter(config={
-        "adapters": {"opencode": {"roots": [str(custom)]}}
-    })
-    assert a.roots == [custom]
+def test_config_supports_base_url_limit_and_auth_token(monkeypatch):
+    seen = []
 
+    def fake_urlopen(request, timeout):
+        seen.append((request.full_url, timeout))
+        return _Response([])
 
-def test_adapter_falls_back_to_defaults_when_no_config():
-    a = OpenCodeAdapter()
-    assert a.roots == OpenCodeAdapter.DEFAULT_ROOTS
+    monkeypatch.setattr("llmwiki.adapters.opencode.urlopen", fake_urlopen)
 
+    adapter = OpenCodeAdapter({"opencode": {
+        "base_url": "http://localhost:9999/",
+        "limit": 3,
+        "auth_token": "abc",
+        "timeout": 2,
+    }})
+    assert adapter.discover_sessions() == []
 
-# ─── Discovery ───────────────────────────────────────────────────────
-
-
-def test_discover_empty_when_no_roots_exist(tmp_path: Path):
-    a = OpenCodeAdapter(config={
-        "adapters": {"opencode": {"roots": [str(tmp_path / "nonexistent")]}}
-    })
-    assert a.discover_sessions() == []
-
-
-def test_discover_finds_jsonl_files(tmp_path: Path):
-    # Create a fake opencode session store
-    store = tmp_path / "opencode" / "sessions"
-    store.mkdir(parents=True)
-    (store / "my-project-01.jsonl").write_text(
-        '{"role": "user", "content": "hi"}\n', encoding="utf-8"
-    )
-    (store / "my-project-02.jsonl").write_text(
-        '{"role": "assistant", "content": "hello"}\n', encoding="utf-8"
-    )
-    # Non-jsonl file should NOT be discovered
-    (store / "readme.txt").write_text("ignore me", encoding="utf-8")
-
-    a = OpenCodeAdapter(config={
-        "adapters": {"opencode": {"roots": [str(store)]}}
-    })
-    sessions = a.discover_sessions()
-    assert len(sessions) == 2
-    names = [s.name for s in sessions]
-    assert all(n.endswith(".jsonl") for n in names)
-
-
-def test_discover_nested_subdirs(tmp_path: Path):
-    store = tmp_path / "opencode" / "sessions"
-    store.mkdir(parents=True)
-    nested = store / "project-a"
-    nested.mkdir()
-    (nested / "session1.jsonl").write_text('{}\n', encoding="utf-8")
-
-    a = OpenCodeAdapter(config={
-        "adapters": {"opencode": {"roots": [str(store)]}}
-    })
-    sessions = a.discover_sessions()
-    assert len(sessions) == 1
-
-
-# ─── Project slug derivation ─────────────────────────────────────────
-
-
-def test_project_slug_from_flat_filename(tmp_path: Path):
-    store = tmp_path / "opencode" / "sessions"
-    store.mkdir(parents=True)
-    path = store / "my-project-abc123.jsonl"
-    path.touch()
-    a = OpenCodeAdapter(config={
-        "adapters": {"opencode": {"roots": [str(store)]}}
-    })
-    assert a.derive_project_slug(path) == "my"  # split on first dash
-
-
-def test_project_slug_from_nested_subdir(tmp_path: Path):
-    store = tmp_path / "opencode" / "sessions"
-    proj = store / "fancy-project"
-    proj.mkdir(parents=True)
-    path = proj / "session-1.jsonl"
-    path.touch()
-    a = OpenCodeAdapter(config={
-        "adapters": {"opencode": {"roots": [str(store)]}}
-    })
-    assert a.derive_project_slug(path) == "fancy-project"
-
-
-def test_project_slug_without_dashes(tmp_path: Path):
-    store = tmp_path / "opencode" / "sessions"
-    store.mkdir(parents=True)
-    path = store / "noslugs.jsonl"
-    path.touch()
-    a = OpenCodeAdapter(config={
-        "adapters": {"opencode": {"roots": [str(store)]}}
-    })
-    # Short enough to stay whole
-    assert a.derive_project_slug(path) == "noslugs"
-
-
-# ─── Subagent detection ──────────────────────────────────────────────
-
-
-def test_is_subagent_true():
-    a = OpenCodeAdapter()
-    assert a.is_subagent(Path("session-subagent-abc.jsonl")) is True
-
-
-def test_is_subagent_false():
-    a = OpenCodeAdapter()
-    assert a.is_subagent(Path("session-main.jsonl")) is False
-
-
-# ─── Record normalization ────────────────────────────────────────────
-
-
-def test_normalize_user_record():
-    a = OpenCodeAdapter()
-    records = [{"role": "user", "content": "hi"}]
-    out = a.normalize_records(records)
-    assert len(out) == 1
-    assert out[0]["type"] == "user"
-    assert out[0]["message"]["role"] == "user"
-    assert out[0]["message"]["content"] == "hi"
-
-
-def test_normalize_assistant_record():
-    a = OpenCodeAdapter()
-    records = [{"role": "assistant", "content": "response"}]
-    out = a.normalize_records(records)
-    assert out[0]["type"] == "assistant"
-
-
-def test_normalize_tool_role_maps_to_user_type():
-    """Tool results are user-side messages in Claude Code shape."""
-    a = OpenCodeAdapter()
-    records = [{"role": "tool", "content": "tool result"}]
-    out = a.normalize_records(records)
-    assert out[0]["type"] == "user"
-    # Preserve the original role for accurate rendering
-    assert out[0]["message"]["role"] == "tool"
-
-
-def test_normalize_preserves_timestamp():
-    a = OpenCodeAdapter()
-    records = [{"role": "user", "content": "hi", "timestamp": "2026-04-16T10:00:00Z"}]
-    out = a.normalize_records(records)
-    assert out[0]["timestamp"] == "2026-04-16T10:00:00Z"
-
-
-def test_normalize_passes_through_claude_shape():
-    """Records already in Claude format must not be rewrapped."""
-    a = OpenCodeAdapter()
-    records = [{
-        "type": "user",
-        "message": {"role": "user", "content": "already normalized"},
-    }]
-    out = a.normalize_records(records)
-    assert out == records
-
-
-def test_normalize_skips_non_dict_records():
-    a = OpenCodeAdapter()
-    records = ["not a dict", 42, {"role": "user", "content": "ok"}]
-    out = a.normalize_records(records)
-    # Only the dict is kept
-    assert len(out) == 1
-
-
-def test_normalize_passes_through_metadata_records():
-    """Records without role/content (e.g. session-init metadata) pass through."""
-    a = OpenCodeAdapter()
-    records = [{"sessionId": "abc", "type": "session-init"}]
-    out = a.normalize_records(records)
-    assert out == records
-
-
-def test_normalize_empty_list():
-    a = OpenCodeAdapter()
-    assert a.normalize_records([]) == []
-
-
-# ─── Availability ────────────────────────────────────────────────────
-
-
-def test_is_available_false_when_no_paths():
-    """is_available checks DEFAULT_ROOTS — on a fresh test runner it's typically False."""
-    # We can't guarantee this without a user install; just assert the call succeeds
-    result = OpenCodeAdapter.is_available()
-    assert isinstance(result, bool)
+    assert seen == [("http://localhost:9999/experimental/session?limit=3&auth_token=abc", 2.0)]

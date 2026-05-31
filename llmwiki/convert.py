@@ -1248,6 +1248,7 @@ def render_session_markdown(
         "type: source",
         f'description: "{description_safe}"',
         f"tags: [{tag_adapter}, session-transcript]",
+        f"agent: {tag_adapter}",
         f"date: {date_str}",
         f"source_file: raw/sessions/{started.strftime('%Y-%m-%dT%H-%M')}-{project_slug}-{slug}.md",
         f"sessionId: {session_id}",
@@ -1388,15 +1389,28 @@ def convert_all(
             if not cls.is_available():
                 continue
             adapter_cfg = config.get(cls.name, {}) if isinstance(config, dict) else {}
+            nested_cfg = (
+                config.get("adapters", {}).get(cls.name, {})
+                if isinstance(config.get("adapters", {}), dict)
+                else {}
+            )
+            if isinstance(adapter_cfg, dict) and isinstance(nested_cfg, dict):
+                adapter_cfg = {**adapter_cfg, **nested_cfg}
             explicit_enabled = (
                 isinstance(adapter_cfg, dict)
                 and adapter_cfg.get("enabled") is True
             )
+            explicit_disabled = (
+                isinstance(adapter_cfg, dict)
+                and adapter_cfg.get("enabled") is False
+            )
+            if explicit_disabled:
+                continue
             if getattr(cls, "is_ai_session", True) or explicit_enabled:
                 selected.append(cls)
 
     if not selected:
-        print("No adapters available. Install Claude Code or Codex CLI first.", file=sys.stderr)
+        print("No adapters available. Install Claude Code or Codex CLI, or start OpenCode server.", file=sys.stderr)
         return 1
 
     converted = unchanged = live = filtered = ignored_count = errors = 0
@@ -1440,13 +1454,13 @@ def convert_all(
             # expensive — so check mtime first and skip the expensive
             # slug + ignore + project-filter work when nothing changed.
             try:
-                mtime = path.stat().st_mtime
+                mtime = adapter.source_mtime(path)
             except OSError as e:
                 errors += 1
                 _bump(cls.name, "errored")
                 _quarantine_add(cls.name, str(path), f"stat failed: {e}")
                 continue
-            key = _portable_state_key(cls.name, path)
+            key = adapter.source_state_key(path) or _portable_state_key(cls.name, path)
             if state.get(key) == mtime:
                 unchanged += 1
                 _bump(cls.name, "unchanged")
@@ -1515,7 +1529,9 @@ def convert_all(
             # way write failures do. Previously the helper swallowed them
             # and the file silently became 'filtered' (zero records).
             try:
-                records = parse_jsonl(path)
+                records = adapter.read_records(path)
+                if records is None:
+                    records = parse_jsonl(path)
             except OSError as e:
                 print(f"  error: {path.name}: {e}", file=sys.stderr)
                 errors += 1

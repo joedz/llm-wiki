@@ -72,7 +72,17 @@
     "synthesize": false
   },
 
-  "_adapters_comment": "Contrib adapters. All disabled by default — enable with: llmwiki sync --adapter <name>",
+  "_adapters_comment": "Core AI adapters auto-run when available. OpenCode uses the local HTTP API.",
+
+  "opencode": {
+    "enabled": true,
+    "base_url": "http://127.0.0.1:4096",
+    "limit": 100,
+    "timeout": 1.5,
+    "auth_token": "",
+    "username": "",
+    "password": ""
+  },
 
   "web_clipper": {
     "enabled": false,

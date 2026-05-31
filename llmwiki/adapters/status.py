@@ -36,6 +36,13 @@ def adapter_status(
     mean without the user cross-referencing ``sessions_config.json``.
     """
     adapter_cfg = config.get(name, {})
+    nested_cfg = (
+        config.get("adapters", {}).get(name, {})
+        if isinstance(config.get("adapters", {}), dict)
+        else {}
+    )
+    if isinstance(adapter_cfg, dict) and isinstance(nested_cfg, dict):
+        adapter_cfg = {**adapter_cfg, **nested_cfg}
     enabled_in_cfg = None
     if isinstance(adapter_cfg, dict):
         enabled_in_cfg = adapter_cfg.get("enabled", None)

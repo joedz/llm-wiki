@@ -2669,6 +2669,8 @@ def detect_agent_label(meta: dict) -> tuple[str, str]:
         tag_str = " ".join(str(t).lower() for t in tags)
     else:
         tag_str = str(tags).lower()
+    if "opencode" in tag_str:
+        return ("OpenCode", "agent-opencode")
     if "codex" in tag_str:
         return ("Codex", "agent-codex")
     if "copilot" in tag_str:
@@ -2692,6 +2694,7 @@ def _agent_map(agent: str) -> tuple[str, str]:
         "cursor": ("Cursor", "agent-cursor"),
         "gemini": ("Gemini", "agent-gemini"),
         "gemini-cli": ("Gemini", "agent-gemini"),
+        "opencode": ("OpenCode", "agent-opencode"),
         "obsidian": ("Obsidian", "agent-obsidian"),
         # Simplification sweep removed the PDF adapter. The "pdf" entry
         # used to live here; left as a comment so a future grep sees

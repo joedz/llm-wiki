@@ -328,14 +328,14 @@ kbd { display: inline-block; padding: 2px 6px; font-family: var(--mono); font-si
 .sessions-table thead {
   position: -webkit-sticky;
   position: sticky;
-  top: 56px;
+  top: 0;
   background: var(--bg-alt);
-  z-index: 1;
+  z-index: 3;
   transform: translateZ(0);
 }
 /* (.table-wrap isolation rule moved up to the main definition above) */
 .sessions-table th, .sessions-table td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
-.sessions-table th { background: var(--bg-alt); font-weight: 600; color: var(--text-secondary); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.sessions-table th { position: relative; z-index: 4; background: var(--bg-alt); font-weight: 600; color: var(--text-secondary); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
 .sessions-table tr:last-child td { border-bottom: none; }
 .sessions-table tr:hover { background: var(--bg-alt); }
 .sessions-table tr.selected { background: var(--accent-bg); }
@@ -697,6 +697,7 @@ a.topic-chip:hover {
 .agent-copilot  { color: #1E40AF; background: rgba(37,99,235,0.1); border-color: rgba(37,99,235,0.3); }
 .agent-cursor   { color: #92400E; background: rgba(217,119,6,0.1); border-color: rgba(217,119,6,0.3); }
 .agent-gemini   { color: #991B1B; background: rgba(220,38,38,0.1); border-color: rgba(220,38,38,0.3); }
+.agent-opencode { color: #0F766E; background: rgba(20,184,166,0.1); border-color: rgba(20,184,166,0.3); }
 .agent-obsidian { color: #7E22CE; background: rgba(126,34,206,0.1); border-color: rgba(126,34,206,0.3); }
 /* Simplification sweep removed the PDF adapter — agent-pdf rule deleted. */
 .agent-unknown  { color: #6B7280; background: rgba(107,114,128,0.1); border-color: rgba(107,114,128,0.3); }
@@ -705,6 +706,7 @@ a.topic-chip:hover {
 :root[data-theme="dark"] .agent-copilot  { color: #60A5FA; background: rgba(96,165,250,0.15); border-color: rgba(96,165,250,0.3); }
 :root[data-theme="dark"] .agent-cursor   { color: #FBBF24; background: rgba(251,191,36,0.15); border-color: rgba(251,191,36,0.3); }
 :root[data-theme="dark"] .agent-gemini   { color: #F87171; background: rgba(248,113,113,0.15); border-color: rgba(248,113,113,0.3); }
+:root[data-theme="dark"] .agent-opencode { color: #5EEAD4; background: rgba(45,212,191,0.15); border-color: rgba(45,212,191,0.3); }
 .sessions-table .agent-badge { font-size: 0.65rem; padding: 1px 6px; }
 
 /* v0.4: Deep-link icon next to headings */
